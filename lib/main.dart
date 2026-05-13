@@ -5,11 +5,9 @@ import 'providers/travel_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/input_screen.dart';
 import 'screens/onboarding_screen.dart';
-import 'services/storage_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await StorageService().initializeHive();
 
   final prefs = await SharedPreferences.getInstance();
   final hasSeenOnboarding = prefs.getBool('has_seen_onboarding') ?? false;
