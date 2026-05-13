@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import 'package:yaml/yaml.dart';
 import '../config/app_config.dart';
 import '../models/poi.dart';
 import '../models/travel_request.dart';
@@ -51,21 +52,33 @@ WICHTIG - Befolge EXAKT diese Regeln:
 3. Gib VOLLSTÄNDIGE Adresse an: Straße, Nummer, PLZ, Stadt
 4. Gib 5-8 POIs zurück
 5. Passe Empfehlungen an die Interessen an: ${request.preferences.join(', ')}
+6. Gib für jeden POI die GPS-Koordinaten (latitude, longitude) an - so genau wie möglich!
+
+KEINE erfundenen Kategorien. KEINE Stadtteile als POIs.
+Beispiel für eine FALSCHE Kategorie: "Kultur", "Architektur", "Natur"
 
 ---
 
-Antworte AUSSCHLIESSLICH mit JSON. Keine weiteren Texte.
+Antworte AUSSCHLIESSLICH im YAML-Format. Keine weiteren Texte, keine Erklärungen.
 Format:
-[
-  {
-    "name": "Exakter Name",
-    "description": "2-3 Sätze warum es sehenswert ist",
-    "category": "Sehenswürdigkeiten|Restaurants|Nachtleben|Sport",
-    "address": "Vollständige Adresse: Straße Nummer, PLZ Stadt",
-    "opening_hours": "Öffnungszeiten oder null",
-    "tip": "Praktischer Tipp"
-  }
-]
+
+pois:
+  - name: "Exakter Name des POI"
+    description: "2-3 Sätze warum es sehenswert ist"
+    category: "Sehenswürdigkeiten"
+    address: "Straße Nummer, PLZ Stadt"
+    latitude: 48.1374
+    longitude: 11.5755
+    opening_hours: "Mo-So 9-18 Uhr"
+    tip: "Praktischer Tipp für Besucher"
+  - name: "Zweiter POI"
+    description: "Beschreibung"
+    category: "Restaurants"
+    address: "Adresse"
+    latitude: 48.1351
+    longitude: 11.5820
+    opening_hours: "Di-Sa 18-23 Uhr"
+    tip: "Tipp"
 ''';
   }
 
@@ -99,18 +112,21 @@ RICHTLINIEN:
 3. Gib VOLLSTÄNDIGE Adresse an: Straße, Nummer, PLZ, Stadt
 4. POIs müssen zum Standort und den Interessen passen: $prefsText
 5. 3-5 Empfehlungen
+6. Gib für jeden POI die GPS-Koordinaten (latitude, longitude) an!
 
-Antworte NUR JSON:
-[
-  {
-    "name": "Name",
-    "description": "2-3 Sätze",
-    "category": "Sehenswürdigkeiten|Restaurants|Nachtleben|Sport",
-    "address": "Vollständige Adresse: Straße Nummer, PLZ Stadt",
-    "opening_hours": "Info oder null",
-    "tip": "Tipp"
-  }
-]
+KEINE erfundenen Kategorien.
+
+Antworte NUR im YAML-Format:
+
+pois:
+  - name: "Name"
+    description: "2-3 Sätze"
+    category: "Sehenswürdigkeiten"
+    address: "Straße Nummer, PLZ Stadt"
+    latitude: 48.1374
+    longitude: 11.5755
+    opening_hours: "Info oder null"
+    tip: "Tipp"
 ''';
   }
 
@@ -143,65 +159,99 @@ Antworte NUR JSON:
     String? destination,
   ]) async {
     try {
-      // Versuche JSON aus der Antwort zu extrahieren
+      // Versuche zuerst YAML-Parsing
+      List<Poi> pois = _tryParseYaml(response);
+
+      // Fallback: JSON-Parsing falls YAML fehlschlägt
+      if (pois.isEmpty) {
+        pois = _tryParseJson(response);
+      }
+
+      if (pois.isEmpty) {
+        throw Exception('Keine POIs in der Antwort gefunden.');
+      }
+
+      // Vergleichendes Geocoding: Nominatim-Koordinaten parallel ermitteln
+      final List<Poi> geocodedPois = [];
+      for (final poi in pois) {
+        LatLng? nominatimCoords;
+
+        // Nominatim-Geocoding für den Vergleich
+        if (poi.address != null && poi.address!.isNotEmpty) {
+          nominatimCoords = await _nominatimService.geocode(poi.address!);
+          if (nominatimCoords == null && destination != null) {
+            nominatimCoords = await _nominatimService.geocodeWithContext(
+              poi.name,
+              destination,
+            );
+          }
+        } else if (destination != null) {
+          nominatimCoords = await _nominatimService.geocodeWithContext(
+            poi.name,
+            destination,
+          );
+        }
+
+        geocodedPois.add(poi.copyWith(nominatimCoordinates: nominatimCoords));
+      }
+
+      return geocodedPois;
+    } catch (e) {
+      throw Exception('Fehler beim Parsen der KI-Antwort: $e');
+    }
+  }
+
+  /// YAML-Antwort parsen
+  List<Poi> _tryParseYaml(String response) {
+    try {
+      String yamlStr = response.trim();
+
+      // Entferne Markdown-Code-Blöcke
+      final codeBlockRegex = RegExp(r'```(?:ya?ml)?\s*([\s\S]*?)\s*```');
+      final match = codeBlockRegex.firstMatch(yamlStr);
+      if (match != null) {
+        yamlStr = match.group(1)!.trim();
+      }
+
+      final parsed = loadYaml(yamlStr);
+      if (parsed is! YamlMap) return [];
+
+      final poisList = parsed['pois'];
+      if (poisList is! YamlList) return [];
+
+      return poisList.map<Poi>((item) {
+        final map = Map<String, dynamic>.from(item as YamlMap);
+        return Poi.fromYamlMap(map);
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// JSON-Fallback-Parsing
+  List<Poi> _tryParseJson(String response) {
+    try {
       String jsonStr = response.trim();
 
-      // Falls die Antwort in Markdown-Code-Blöcken eingebettet ist
+      // Entferne Markdown-Code-Blöcke
       final codeBlockRegex = RegExp(r'```(?:json)?\s*([\s\S]*?)\s*```');
       final match = codeBlockRegex.firstMatch(jsonStr);
       if (match != null) {
         jsonStr = match.group(1)!.trim();
       }
 
-      // Finde das JSON-Array in der Antwort
+      // Finde JSON-Array
       final arrayStart = jsonStr.indexOf('[');
       final arrayEnd = jsonStr.lastIndexOf(']');
-      if (arrayStart != -1 && arrayEnd != -1) {
-        jsonStr = jsonStr.substring(arrayStart, arrayEnd + 1).trim();
-      }
-
-      // Normalisiere häufige Probleme
-      jsonStr = jsonStr.replaceAll(r'\"', '"').replaceAll('\\n', '\n');
+      if (arrayStart == -1 || arrayEnd == -1) return [];
+      jsonStr = jsonStr.substring(arrayStart, arrayEnd + 1).trim();
 
       final List<dynamic> jsonList = jsonDecode(jsonStr);
-      final List<Poi> pois = [];
-
-      // Geocode jede Adresse
-      for (final json in jsonList) {
-        final address = json['address'] as String?;
-        final name = json['name'] as String? ?? '';
-
-        LatLng? coordinates;
-        if (address != null && address.isNotEmpty) {
-          // Versuche mit vollständiger Adresse zu geocoden
-          coordinates = await _nominatimService.geocode(address);
-
-          // Falls das fehlschlägt und wir ein Reiseziel haben, versuche mit Kontext
-          if (coordinates == null && destination != null) {
-            coordinates = await _nominatimService.geocodeWithContext(
-              name,
-              destination,
-            );
-          }
-        }
-
-        // Erstelle den POI mit den Koordinaten
-        pois.add(
-          Poi(
-            name: name,
-            description: json['description'] as String? ?? '',
-            category: json['category'] as String? ?? 'Sonstiges',
-            coordinates: coordinates,
-            address: address,
-            openingHours: json['opening_hours'] as String?,
-            tip: json['tip'] as String?,
-          ),
-        );
-      }
-
-      return pois;
-    } catch (e) {
-      throw Exception('Fehler beim Parsen der KI-Antwort: $e');
+      return jsonList
+          .map<Poi>((json) => Poi.fromJson(json as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      return [];
     }
   }
 }
