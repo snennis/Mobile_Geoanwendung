@@ -175,22 +175,161 @@ class PoiDetailSheet extends StatelessWidget {
                 ),
               ],
 
-              // Koordinaten
-              if (poi.coordinates != null) ...[
-                const SizedBox(height: 12),
-                _buildInfoRow(
-                  context,
-                  Icons.my_location,
-                  'Koordinaten',
-                  '${poi.coordinates!.latitude.toStringAsFixed(4)}, '
-                      '${poi.coordinates!.longitude.toStringAsFixed(4)}',
-                ),
-              ],
+              // Vergleichendes Geocoding
+              const SizedBox(height: 16),
+              _buildGeocodingComparison(context),
             ],
           ),
         );
       },
     );
+  }
+
+  /// Zeigt den Geocoding-Vergleich zwischen Nominatim und LLM
+  Widget _buildGeocodingComparison(BuildContext context) {
+    final hasNominatim = poi.nominatimCoordinates != null;
+    final hasLlm = poi.llmCoordinates != null;
+
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.compare_arrows,
+                  size: 18,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'Geocoding-Vergleich',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            // Nominatim
+            _buildCoordRow(
+              context,
+              icon: Icons.map,
+              color: Colors.blue[700]!,
+              label: 'Nominatim (OSM)',
+              coords: poi.nominatimCoordinates,
+            ),
+            const SizedBox(height: 6),
+
+            // LLM
+            _buildCoordRow(
+              context,
+              icon: Icons.smart_toy,
+              color: Colors.deepOrange[700]!,
+              label: 'Llama 3.2 (LLM)',
+              coords: poi.llmCoordinates,
+            ),
+
+            // Abweichung
+            if (poi.hasBothCoordinates) ...[
+              const Divider(height: 16),
+              Row(
+                children: [
+                  Icon(
+                    Icons.straighten,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.secondary,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Abweichung: ${_formatDistance(poi.geocodingDifferenceMeters!)}',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: _getDifferenceColor(
+                        poi.geocodingDifferenceMeters!,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+
+            if (!hasNominatim && !hasLlm) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Keine Geocoding-Daten verfügbar.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCoordRow(
+    BuildContext context, {
+    required IconData icon,
+    required Color color,
+    required String label,
+    required dynamic coords,
+  }) {
+    return Row(
+      children: [
+        Container(
+          width: 20,
+          height: 20,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Icon(icon, size: 13, color: Colors.white),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              Text(
+                coords != null
+                    ? '${coords.latitude.toStringAsFixed(5)}, ${coords.longitude.toStringAsFixed(5)}'
+                    : 'Nicht verfügbar',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontFamily: 'monospace',
+                  color: coords != null
+                      ? null
+                      : Theme.of(context).colorScheme.error,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _formatDistance(double meters) {
+    if (meters < 1000) return '${meters.round()} m';
+    return '${(meters / 1000).toStringAsFixed(1)} km';
+  }
+
+  Color _getDifferenceColor(double meters) {
+    if (meters < 100) return Colors.green;
+    if (meters < 500) return Colors.orange;
+    return Colors.red;
   }
 
   Widget _buildInfoRow(
