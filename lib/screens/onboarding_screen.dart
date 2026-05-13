@@ -62,10 +62,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       'Entdecke POIs auf der interaktiven Karte und filtere nach Kategorien wie Restaurants, Museen und mehr.',
                 ),
                 _buildPage(
-                  icon: Icons.star,
-                  title: 'Favoriten speichern',
+                  icon: Icons.compare_arrows,
+                  title: 'Geocoding vergleichen',
                   description:
-                      'Markiere deine Lieblingsorte als Favoriten und greife auf deine Reiseverlauf offline zu.',
+                      'Vergleiche Nominatim- und LLM-Geocoding nebeneinander auf der Karte.',
                 ),
                 _buildPage(
                   icon: Icons.settings,
