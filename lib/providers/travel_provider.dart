@@ -5,6 +5,9 @@ import '../models/travel_request.dart';
 import '../services/ollama_service.dart';
 import '../services/location_service.dart';
 
+/// Welche Geocoding-Quelle auf der Karte angezeigt wird
+enum GeocodingDisplayMode { nominatim, llm, both }
+
 class TravelProvider extends ChangeNotifier {
   final OllamaService _ollamaService = OllamaService();
   final LocationService _locationService = LocationService();
@@ -18,6 +21,7 @@ class TravelProvider extends ChangeNotifier {
   List<String> _currentPreferences = [];
   String _loadingStatus = '';
   Set<String> _visibleCategories = {};
+  GeocodingDisplayMode _geocodingDisplayMode = GeocodingDisplayMode.both;
 
   List<Poi> get pois => _filteredPois;
   List<Poi> get _filteredPois {
@@ -25,6 +29,7 @@ class TravelProvider extends ChangeNotifier {
     return _pois.where((p) => _visibleCategories.contains(p.category)).toList();
   }
 
+  List<Poi> get allPois => _pois;
   List<Poi> get nearbyPois => _nearbyPois;
   LatLng? get userLocation => _userLocation;
   bool get isLoading => _isLoading;
@@ -33,6 +38,25 @@ class TravelProvider extends ChangeNotifier {
   String get loadingStatus => _loadingStatus;
   Set<String> get visibleCategories => _visibleCategories;
   Set<String> get allCategories => _pois.map((p) => p.category).toSet();
+  GeocodingDisplayMode get geocodingDisplayMode => _geocodingDisplayMode;
+
+  /// Anzahl POIs mit beiden Geocoding-Quellen
+  int get poisWithBothCoords => _pois.where((p) => p.hasBothCoordinates).length;
+
+  /// Durchschnittlicher Abstand zwischen Nominatim und LLM in Metern
+  double? get averageGeocodingDifference {
+    final diffs = _pois
+        .where((p) => p.hasBothCoordinates)
+        .map((p) => p.geocodingDifferenceMeters!)
+        .toList();
+    if (diffs.isEmpty) return null;
+    return diffs.reduce((a, b) => a + b) / diffs.length;
+  }
+
+  void setGeocodingDisplayMode(GeocodingDisplayMode mode) {
+    _geocodingDisplayMode = mode;
+    notifyListeners();
+  }
 
   Future<void> searchPois(TravelRequest request) async {
     _isLoading = true;
@@ -43,18 +67,19 @@ class TravelProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // POIs direkt von Ollama holen (mit Koordinaten)
-      _loadingStatus = 'Sehenswürdigkeiten werden generiert...';
+      _loadingStatus = 'POIs werden generiert (YAML + LLM-Geocoding)...';
       notifyListeners();
       final pois = await _ollamaService.getPoisForTrip(request);
 
-      // Filter POIs ohne Koordinaten
-      _loadingStatus = 'Standorte werden validiert...';
+      _loadingStatus = 'Vergleichendes Geocoding abgeschlossen.';
       notifyListeners();
+
+      // Filter: mindestens eine Koordinatenquelle muss vorhanden sein
       final poisWithCoords = pois.where((p) => p.coordinates != null).toList();
 
       _pois = poisWithCoords;
       _visibleCategories = _pois.map((p) => p.category).toSet();
+      _geocodingDisplayMode = GeocodingDisplayMode.both;
       _loadingStatus = '';
       _isLoading = false;
       notifyListeners();
@@ -83,14 +108,12 @@ class TravelProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Standort holen
       _userLocation = await _locationService.getCurrentLocation();
 
       if (_userLocation == null) {
         throw Exception('Standort konnte nicht ermittelt werden.');
       }
 
-      // Nearby POIs von Ollama holen (mit Koordinaten)
       _loadingStatus = 'Nahegelegene Orte werden gesucht...';
       notifyListeners();
       final pois = await _ollamaService.getNearbyPois(
@@ -101,7 +124,6 @@ class TravelProvider extends ChangeNotifier {
             : _currentPreferences,
       );
 
-      // Filter POIs mit Koordinaten
       _loadingStatus = 'Standorte werden validiert...';
       notifyListeners();
       final poisWithCoords = pois.where((p) => p.coordinates != null).toList();
