@@ -17,6 +17,7 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   final MapController _mapController = MapController();
   bool _showNearbyPois = false;
+  bool _showLegend = true;
 
   @override
   Widget build(BuildContext context) {
@@ -26,6 +27,56 @@ class _MapScreenState extends State<MapScreen> {
           appBar: AppBar(
             title: Text(provider.currentDestination ?? 'Karte'),
             actions: [
+              // Geocoding-Modus-Umschalter
+              PopupMenuButton<GeocodingDisplayMode>(
+                icon: const Icon(Icons.compare_arrows),
+                tooltip: 'Geocoding-Vergleich',
+                onSelected: provider.setGeocodingDisplayMode,
+                itemBuilder: (_) => [
+                  PopupMenuItem(
+                    value: GeocodingDisplayMode.both,
+                    child: ListTile(
+                      leading: const Icon(Icons.compare),
+                      title: const Text('Beide anzeigen'),
+                      trailing:
+                          provider.geocodingDisplayMode ==
+                              GeocodingDisplayMode.both
+                          ? const Icon(Icons.check, size: 18)
+                          : null,
+                      dense: true,
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: GeocodingDisplayMode.nominatim,
+                    child: ListTile(
+                      leading: Icon(Icons.map, color: Colors.blue[700]),
+                      title: const Text('Nur Nominatim'),
+                      trailing:
+                          provider.geocodingDisplayMode ==
+                              GeocodingDisplayMode.nominatim
+                          ? const Icon(Icons.check, size: 18)
+                          : null,
+                      dense: true,
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: GeocodingDisplayMode.llm,
+                    child: ListTile(
+                      leading: Icon(
+                        Icons.smart_toy,
+                        color: Colors.deepOrange[700],
+                      ),
+                      title: const Text('Nur Llama 3.2'),
+                      trailing:
+                          provider.geocodingDisplayMode ==
+                              GeocodingDisplayMode.llm
+                          ? const Icon(Icons.check, size: 18)
+                          : null,
+                      dense: true,
+                    ),
+                  ),
+                ],
+              ),
               // Filter Button
               if (provider.allCategories.isNotEmpty)
                 IconButton(
@@ -102,7 +153,17 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                 ),
 
-              // POI-Legende
+              // Geocoding-Legende
+              if (!provider.isLoading &&
+                  _getActivePois(provider).isNotEmpty &&
+                  _showLegend)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: _buildGeocodingLegend(provider),
+                ),
+
+              // POI-Liste unten
               if (!provider.isLoading && _getActivePois(provider).isNotEmpty)
                 Positioned(
                   bottom: 16,
@@ -115,6 +176,17 @@ class _MapScreenState extends State<MapScreen> {
           floatingActionButton: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Legende ein/aus
+              FloatingActionButton.small(
+                heroTag: 'legend',
+                onPressed: () => setState(() => _showLegend = !_showLegend),
+                child: Icon(
+                  _showLegend
+                      ? Icons.legend_toggle
+                      : Icons.legend_toggle_outlined,
+                ),
+              ),
+              const SizedBox(height: 8),
               // Standort anzeigen
               FloatingActionButton.small(
                 heroTag: 'location',
@@ -138,33 +210,131 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  /// Legende für den Geocoding-Vergleich
+  Widget _buildGeocodingLegend(TravelProvider provider) {
+    final avgDiff = provider.averageGeocodingDifference;
+    final bothCount = provider.poisWithBothCoords;
+
+    return Card(
+      elevation: 4,
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.compare_arrows, size: 16),
+                const SizedBox(width: 4),
+                Text(
+                  'Geocoding-Vergleich',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            _legendRow(
+              Colors.blue[700]!,
+              Icons.map,
+              'Nominatim (OSM)',
+              isSquare: false,
+            ),
+            const SizedBox(height: 3),
+            _legendRow(
+              Colors.deepOrange[700]!,
+              Icons.smart_toy,
+              'Llama 3.2 (LLM)',
+              isSquare: true,
+            ),
+            if (provider.geocodingDisplayMode == GeocodingDisplayMode.both) ...[
+              const SizedBox(height: 3),
+              _legendRow(
+                Colors.grey,
+                Icons.linear_scale,
+                'Verbindungslinie',
+                isSquare: false,
+              ),
+            ],
+            const Divider(height: 12),
+            Text(
+              'Vergleich: $bothCount/${provider.pois.length} POIs',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            if (avgDiff != null)
+              Text(
+                'Ø Abweichung: ${_formatDistance(avgDiff)}',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.bold),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _legendRow(
+    Color color,
+    IconData icon,
+    String label, {
+    required bool isSquare,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 14,
+          height: 14,
+          decoration: BoxDecoration(
+            color: color,
+            shape: isSquare ? BoxShape.rectangle : BoxShape.circle,
+            borderRadius: isSquare ? BorderRadius.circular(3) : null,
+          ),
+          child: Icon(icon, size: 10, color: Colors.white),
+        ),
+        const SizedBox(width: 6),
+        Text(label, style: const TextStyle(fontSize: 11)),
+      ],
+    );
+  }
+
+  String _formatDistance(double meters) {
+    if (meters < 1000) return '${meters.round()} m';
+    return '${(meters / 1000).toStringAsFixed(1)} km';
+  }
+
   Widget _buildMap(TravelProvider provider) {
     final pois = _getActivePois(provider);
+    final displayMode = provider.geocodingDisplayMode;
 
     // Mittelpunkt berechnen
-    LatLng center = const LatLng(48.137154, 11.576124); // Default: München
+    LatLng center = const LatLng(48.137154, 11.576124);
     double zoom = 5.0;
 
     if (pois.isNotEmpty) {
       final poisWithCoords = pois.where((p) => p.coordinates != null).toList();
       if (poisWithCoords.isNotEmpty) {
-        // Berechne Bounding Box
         double minLat = poisWithCoords.first.coordinates!.latitude;
         double maxLat = minLat;
         double minLng = poisWithCoords.first.coordinates!.longitude;
         double maxLng = minLng;
 
         for (final poi in poisWithCoords) {
-          minLat = math.min(minLat, poi.coordinates!.latitude);
-          maxLat = math.max(maxLat, poi.coordinates!.latitude);
-          minLng = math.min(minLng, poi.coordinates!.longitude);
-          maxLng = math.max(maxLng, poi.coordinates!.longitude);
+          final coords = _getAllVisibleCoords(poi, displayMode);
+          for (final c in coords) {
+            minLat = math.min(minLat, c.latitude);
+            maxLat = math.max(maxLat, c.latitude);
+            minLng = math.min(minLng, c.longitude);
+            maxLng = math.max(maxLng, c.longitude);
+          }
         }
 
-        // Mittelpunkt der Bounding Box
         center = LatLng((minLat + maxLat) / 2, (minLng + maxLng) / 2);
 
-        // Zoom basierend auf Bounding Box
         final latDelta = maxLat - minLat;
         final lngDelta = maxLng - minLng;
         final delta = math.max(latDelta, lngDelta);
@@ -181,10 +351,26 @@ class _MapScreenState extends State<MapScreen> {
           zoom = 8.0;
         }
 
-        // Auto-zoom nach erstem Laden
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _mapController.move(center, zoom);
         });
+      }
+    }
+
+    // Verbindungslinien zwischen Nominatim und LLM-Markern
+    final List<Polyline> connectionLines = [];
+    if (displayMode == GeocodingDisplayMode.both) {
+      for (final poi in pois) {
+        if (poi.hasBothCoordinates) {
+          connectionLines.add(
+            Polyline(
+              points: [poi.nominatimCoordinates!, poi.llmCoordinates!],
+              color: Colors.grey.withAlpha(180),
+              strokeWidth: 2,
+              pattern: const StrokePattern.dotted(),
+            ),
+          );
+        }
       }
     }
 
@@ -226,22 +412,143 @@ class _MapScreenState extends State<MapScreen> {
               ),
             ],
           ),
+        // Verbindungslinien
+        if (connectionLines.isNotEmpty)
+          PolylineLayer(polylines: connectionLines),
         // POI Markers
-        MarkerLayer(
-          markers: pois
-              .where((poi) => poi.coordinates != null)
-              .map((poi) => _buildPoiMarker(poi))
-              .toList(),
-        ),
+        MarkerLayer(markers: _buildAllMarkers(pois, displayMode)),
       ],
     );
   }
 
-  Marker _buildPoiMarker(Poi poi) {
+  /// Sammelt alle sichtbaren Koordinaten eines POI
+  List<LatLng> _getAllVisibleCoords(Poi poi, GeocodingDisplayMode mode) {
+    final coords = <LatLng>[];
+    if (mode == GeocodingDisplayMode.nominatim ||
+        mode == GeocodingDisplayMode.both) {
+      if (poi.nominatimCoordinates != null) {
+        coords.add(poi.nominatimCoordinates!);
+      }
+    }
+    if (mode == GeocodingDisplayMode.llm || mode == GeocodingDisplayMode.both) {
+      if (poi.llmCoordinates != null) {
+        coords.add(poi.llmCoordinates!);
+      }
+    }
+    // Fallback: falls im gewählten Modus keine Koordinaten vorhanden
+    if (coords.isEmpty && poi.coordinates != null) {
+      coords.add(poi.coordinates!);
+    }
+    return coords;
+  }
+
+  /// Erstellt alle Marker je nach Display-Modus
+  List<Marker> _buildAllMarkers(
+    List<Poi> pois,
+    GeocodingDisplayMode displayMode,
+  ) {
+    final markers = <Marker>[];
+
+    for (final poi in pois) {
+      switch (displayMode) {
+        case GeocodingDisplayMode.nominatim:
+          if (poi.nominatimCoordinates != null) {
+            markers.add(_buildNominatimMarker(poi));
+          }
+          break;
+        case GeocodingDisplayMode.llm:
+          if (poi.llmCoordinates != null) {
+            markers.add(_buildLlmMarker(poi));
+          }
+          break;
+        case GeocodingDisplayMode.both:
+          if (poi.nominatimCoordinates != null) {
+            markers.add(_buildNominatimMarker(poi));
+          }
+          if (poi.llmCoordinates != null) {
+            markers.add(_buildLlmMarker(poi));
+          }
+          // Falls nur eine Quelle vorhanden, zeige mit Standard-Marker
+          if (poi.nominatimCoordinates == null &&
+              poi.llmCoordinates == null &&
+              poi.coordinates != null) {
+            markers.add(_buildFallbackMarker(poi));
+          }
+          break;
+      }
+    }
+
+    return markers;
+  }
+
+  /// Nominatim-Marker (rund, blau)
+  Marker _buildNominatimMarker(Poi poi) {
+    return Marker(
+      point: poi.nominatimCoordinates!,
+      width: 36,
+      height: 36,
+      child: GestureDetector(
+        onTap: () => _showPoiDetail(poi),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.blue[700],
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(60),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Icon(
+            _getCategoryIcon(poi.category),
+            color: Colors.white,
+            size: 18,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// LLM-Marker (Quadrat, orange)
+  Marker _buildLlmMarker(Poi poi) {
+    return Marker(
+      point: poi.llmCoordinates!,
+      width: 36,
+      height: 36,
+      child: GestureDetector(
+        onTap: () => _showPoiDetail(poi),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.deepOrange[700],
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.white, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(60),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Icon(
+            _getCategoryIcon(poi.category),
+            color: Colors.white,
+            size: 18,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Fallback-Marker wenn nur eine unbekannte Quelle
+  Marker _buildFallbackMarker(Poi poi) {
     return Marker(
       point: poi.coordinates!,
-      width: 40,
-      height: 40,
+      width: 36,
+      height: 36,
       child: GestureDetector(
         onTap: () => _showPoiDetail(poi),
         child: Container(
@@ -260,7 +567,7 @@ class _MapScreenState extends State<MapScreen> {
           child: Icon(
             _getCategoryIcon(poi.category),
             color: Colors.white,
-            size: 20,
+            size: 18,
           ),
         ),
       ),
@@ -318,14 +625,27 @@ class _MapScreenState extends State<MapScreen> {
                             fontSize: 13,
                           ),
                         ),
-                        Text(
-                          poi.category,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant,
-                          ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              poi.category,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            if (poi.hasBothCoordinates) ...[
+                              const SizedBox(width: 4),
+                              Icon(
+                                Icons.compare_arrows,
+                                size: 12,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ],
+                          ],
                         ),
                       ],
                     ),
